@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Depends
 from app.schemas import PostCreate, PostResponse
 from app.db import Post, create_db_and_tables, get_async_session
 from sqlalchemy.ext.asyncio import AsyncSession
 from contextlib import asynccontextmanager
+from sqlalchemy import select
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -12,37 +13,43 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan = lifespan)
 
-text_posts = {
-    1 : {"Title" : "Atomic habits", "Content": "Self help book with awesome habit tricks"},
-    2 : {"Title" : "Psychology of Money", "Content": "Finance Book"},
-    3 : {"Title" : "Deep Work", "Content": "Focus and productivity in a distracted world"},
-    4 : {"Title" : "Rich Dad Poor Dad", "Content": "Mindset lessons about money and investing"},
-    5 : {"Title" : "Think Like a Monk", "Content": "Mental clarity, purpose, and discipline"},
-    6 : {"Title" : "The Alchemist", "Content": "A journey about dreams and destiny"},
-    7 : {"Title" : "Ikigai", "Content": "Finding purpose and balance in life"},
-    8 : {"Title" : "The Power of Now", "Content": "Living in the present moment"},
-    9 : {"Title" : "Can't Hurt Me", "Content": "Mental toughness and self-discipline"},
-    10: {"Title" : "Zero to One", "Content": "Startup thinking and innovation"}
-}
+@app.post("/upload")
+async def upload_file(
+    file : UploadFile = File(...),
+    caption : str = Form(""),
+    session : AsyncSession = Depends(get_async_session)
+):
+    post = Post(
+        caption = caption,
+        url = "dummy url",
+        file_type = "photo",
+        file_name = "dummy name"
+    )
 
-#GET method with limit query parameter
-@app.get("/posts")
-def get_all_posts(limit : int) -> list[PostResponse]:
-    return list(text_posts.values())[:limit]
+    session.add(post)
+    await session.commit()
+    await session.refresh(post)
+    return post
 
-#GET method with path parameter and HTTPException.
-@app.get("/posts/{id}")
-def get_post(id : int):
-    if id not in text_posts:
-        raise HTTPException(status_code = 404,detail= "Post not found")
-    return text_posts.get(id)
+@app.get("/feed")
+async def get_feed(
+    session : AsyncSession = Depends(get_async_session)
+):
+    
+    result = await session.execute(select(Post).order_by(Post.created_at.desc()))
+    posts = [row[0] for row in result.all()]
 
-#Request Body & POST
-@app.post("/posts")
-def create_post(post : PostCreate) -> PostResponse:
+    posts_data = []
+    for post in posts :
+        posts_data.append(
+            {
+            "id" : str(post.id),
+            "caption" : post.caption,
+            "url" : post.url,
+            "file_type" : post.file_type,
+            "file_name" : post.file_name,
+            "created_at" : post.created_at.isoformat()
+            }
+        )
 
-    new_post = {"Title" : post.Title ,"Content" : post.Content}
-    new_id = max(text_posts.keys()) + 1
-    text_posts[new_id] = new_post
-    print(text_posts[max(text_posts.keys())])
-    return new_post
+        return {"posts" : posts_data}
